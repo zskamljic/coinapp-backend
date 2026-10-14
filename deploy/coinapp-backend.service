@@ -1,0 +1,44 @@
+[Unit]
+Description=CoinApp backend (ECB sync + share API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=coinapp
+WorkingDirectory=/opt/coinapp-backend
+
+# Credentials live here, chmod 600, owned by root:coinapp.
+EnvironmentFile=/etc/coinapp/secrets.env
+Environment=GOMEMLIMIT=64MiB
+Environment=GOMAXPROCS=1
+
+ExecStart=/opt/coinapp-backend/coinapp-backend
+
+Restart=always
+RestartSec=10
+
+# The process only needs to read one key file and talk to two hosts.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Sized for a 1 GB single-core VPS that also hosts other things.
+MemoryMax=192M
+MemoryHigh=128M
+CPUQuota=80%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

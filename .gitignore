@@ -1,0 +1,26 @@
+# Binaries
+coinapp-backend
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Firebase credentials
+coinapp-a454b-firebase-adminsdk-*.json

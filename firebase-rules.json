@@ -1,0 +1,115 @@
+{
+  "//": [
+    "CoinApp Realtime Database rules.",
+    "",
+    "Design: the coin catalog is public and written ONLY by the backend using Admin",
+    "SDK credentials, which bypass these rules entirely. No browser can write it.",
+    "",
+    "A user owns exactly one node of their own: /users/{uid}. They may read and",
+    "write their own counts and profile, and nothing else. No client can write a",
+    "share node, so the backend is the only thing that can hand out (or take back)",
+    "access to somebody else's collection.",
+    "",
+    "THE SHARE MODEL",
+    "",
+    "Sharing is a live read, not a copy. There is no snapshot of anybody's counts",
+    "anywhere: the recipient's browser subscribes directly to the owner's",
+    "/users/{owner}/owned, so the view is always the owner's current collection.",
+    "",
+    "The access decision is a single grant node, keyed by READER and naming OWNERS:",
+    "",
+    "  /shares/{readerUid}/{ownerUid}  -> reader may read owner's /owned",
+    "",
+    "Read it as \"readerUid may read ownerUid's coins\". The backend writes this node",
+    "when the recipient accepts an invitation, and deletes it when either side",
+    "removes the share. Because no client may write /shares, a user can never add",
+    "themselves to somebody else's list.",
+    "",
+    "The three relationship nodes are all backend-only writes:",
+    "",
+    "  /inbox/{readerUid}/{ownerUid}   pending invite; readable only by the reader",
+    "  /shares/{readerUid}/{ownerUid}  accepted grant; readable only by the reader",
+    "  /outbox/{ownerUid}/{readerUid}  the owner's record, so they can revoke",
+    "",
+    "Names and avatars come from /users/{uid}/profile, which each user writes for",
+    "themselves. It is readable by a reader who has either a pending invite or an",
+    "accepted grant for that uid, so an invitation can show who sent it while the",
+    "information itself is never public.",
+    "",
+    "CHANGES FROM YOUR PREVIOUS RULES (3):",
+    "",
+    "1. /users/{uid}/owned is now readable when a matching /shares grant exists.",
+    "   This is the rule that makes live sharing possible.",
+    "2. ADDED /users/{uid}/profile, write-by-self and read-by-self, invitee or",
+    "   grantee.",
+    "3. /shares is keyed by reader and readable by that reader only. It replaces the",
+    "   old unreadable /shares/{id} snapshot record; there are no snapshots now.",
+    "",
+    "UNCHANGED: the world-readable /coins and /meta nodes, the backend-only",
+    "/inbox and /outbox, the /users/{uid}/owned write-by-self rule, and the",
+    "newData.val() clamp that stops a count ever going negative."
+  ],
+
+  "rules": {
+    "coins": {
+      ".read": true
+      // Uncomment to let one specific browser account hand-edit the catalog.
+      // Scoped to this node on purpose: it must never reach users/*.
+      // ".write": "auth.uid == 'dDzZyU426cbjgn4pf9Sv5S1GO3F2'"
+    },
+
+    "meta": {
+      ".read": true,
+      ".write": false
+    },
+
+    "users": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+
+        "profile": {
+          // Self, somebody who was invited, or somebody with an accepted grant.
+          ".read": "auth != null && (root.child('inbox').child(auth.uid).child($uid).exists() || root.child('shares').child(auth.uid).child($uid).exists())",
+          ".write": "$uid === auth.uid"
+        },
+
+        "owned": {
+          // Only an accepted grant opens somebody else's collection. There is no
+          // way to read a user you have not been shared with.
+          ".read": "auth != null && root.child('shares').child(auth.uid).child($uid).exists()",
+          ".write": "$uid === auth.uid",
+          "$coinId": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000 && root.child('coins').child($coinId).exists()"
+          }
+        }
+      }
+    },
+
+    // The access-control list. Keyed by reader, naming the owners they may read.
+    // Readable by that reader only, and never writable by any client: only the
+    // backend can create or remove a grant.
+    "shares": {
+      "$reader": {
+        ".read": "$reader === auth.uid",
+        ".write": false
+      }
+    },
+
+    "inbox": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": false
+      }
+    },
+
+    "outbox": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": false
+      }
+    },
+
+    ".read": false,
+    ".write": false
+  }
+}
