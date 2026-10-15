@@ -1,5 +1,7 @@
 # Binaries
-coinapp-backend
+# Anchored to the repo root, otherwise this also matches the cmd/coinapp-backend
+# source directory and silently drops the program's entry point from the repo.
+/coinapp-backend
 *.exe
 *.dll
 *.so
