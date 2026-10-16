@@ -274,7 +274,7 @@ func ParseNationalPage(html string) []Coin {
 		}
 
 		for i, src := range extractNationalImages(box) {
-			year := designYear(src)
+			year := nationalYearFor(country, src)
 			coins = append(coins, Coin{
 				Country:     country,
 				Feature:     nationalFeature(i, year),
@@ -315,7 +315,8 @@ func extractNationalDescription(box string) string {
 }
 
 // nationalFeature names the design, e.g. "National side, 2008 design" or
-// "National side, third series" when the filename carries no year.
+// "National side" when the year is unknown. Every design now resolves a year, so
+// the first form is the normal one.
 func nationalFeature(index int, year string) string {
 	switch {
 	case year != "":
@@ -329,17 +330,28 @@ func nationalFeature(index int, year string) string {
 
 // designYear pulls a year out of an image filename.
 func designYear(src string) string {
-	name := src
-	if i := strings.LastIndexByte(name, '/'); i >= 0 {
-		name = name[i+1:]
-	}
-	if i := strings.LastIndexByte(name, '.'); i > 0 {
-		name = name[:i]
-	}
+	name := imageName(src)
 	if m := nationalYearInName.FindStringSubmatch(name); m != nil {
 		return m[1]
 	}
 	return ""
+}
+
+// imageName is the last path segment of a URL, without its extension.
+func imageName(src string) string {
+	name := lastPathSegment(src)
+	if i := strings.LastIndexByte(name, '.'); i > 0 {
+		name = name[:i]
+	}
+	return name
+}
+
+// lastPathSegment is the last path segment of a URL, extension included.
+func lastPathSegment(src string) string {
+	if i := strings.LastIndexByte(src, '/'); i >= 0 {
+		return src[i+1:]
+	}
+	return src
 }
 
 // extractNationalImages returns the absolute image URLs of one country box, in

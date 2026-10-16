@@ -23,14 +23,18 @@ func TestParseNationalPage(t *testing.T) {
 		if coin.Description == "" {
 			t.Errorf("no description for %s / %s", coin.Country, coin.Feature)
 		}
-		// The page publishes neither volume nor issuing date. The date is the
-		// design year carried in the image filename, which only some designs have:
-		// a country's first national design is usually just "<Country>_2euro.jpg".
+		// The page publishes no issuing volume. The date is the design's issue year,
+		// which now always resolves: from the image filename, from the override for
+		// designs that are not a country's first series, or from the year the country
+		// began issuing euro coins.
 		if coin.Volume != "" {
 			t.Errorf("national coin should have no volume, got %q", coin.Volume)
 		}
-		if coin.Date != "" && !nationalYear.MatchString(coin.Date) {
-			t.Errorf("date must be empty or a 4 digit design year, got %q", coin.Date)
+		if !nationalYear.MatchString(coin.Date) {
+			t.Errorf("%s / %s: date must be a 4 digit year, got %q", coin.Country, coin.Feature, coin.Date)
+		}
+		if strings.Contains(coin.Feature, "series") {
+			t.Errorf("%s: a design should never fall back to a series number: %q", coin.Country, coin.Feature)
 		}
 		if len(coin.ImageURLs) != 1 {
 			t.Fatalf("expected exactly one image per design, got %v", coin.ImageURLs)
@@ -111,6 +115,44 @@ func TestDesignYear(t *testing.T) {
 		if got := designYear(src); got != want {
 			t.Errorf("designYear(%s) = %q, want %q", src, got, want)
 		}
+	}
+}
+
+// Every national design must end up with the year it was issued: the filename
+// when it has one, an override when the design is newer than the country's first
+// series, and otherwise the year the country began issuing euro coins.
+func TestNationalYearForEveryDesign(t *testing.T) {
+	cases := []struct {
+		country, image, want, why string
+	}{
+		{"Belgium", "be/Belgium_2euro_2014ph.jpg", "2014", "filename"},
+		{"France", "fr/France_2euro_2022.jpg", "2022", "filename"},
+		{"Austria", "at/Austria_2Euro.jpg", "2002", "eurozone entry"},
+		{"Greece", "gr/Greece_2euro.jpg", "2001", "eurozone entry"},
+		{"Slovenia", "si/Slovenia_2Euro.jpg", "2007", "eurozone entry"},
+		{"Croatia", "hr/Croatia_2euro.jpg", "2023", "eurozone entry"},
+		{"Bulgaria", "bg/Bulgaria_2euro.jpg", "2026", "eurozone entry"},
+		{"Estonia", "ee/Estonia_2Euro.jpg", "2011", "eurozone entry"},
+		{"Andorra", "ad/ad_2euro.jpg", "2011", "eurozone entry"},
+		{"Monaco", "mc/Monaco_2euro_2025.jpg", "2025", "filename"},
+		// The two designs that are not a country's first series, where the
+		// eurozone entry year would be wrong.
+		{"Netherlands", "nl/Netherlands_2Euro.jpg", "2014", "override, not 2002"},
+		{"Vatican City", "va/Vaticano_2euro_SedeVacante.jpg", "2025", "override, not 2002"},
+		// A dated filename must win even for a country that has an override.
+		{"Netherlands", "nl/Netherlands_2euro_2001.jpg", "2001", "filename beats override"},
+	}
+	for _, tc := range cases {
+		if got := nationalYearFor(tc.country, "https://ecb.example/euro/coins/common/shared/img/"+tc.image); got != tc.want {
+			t.Errorf("%s %s = %q, want %q (%s)", tc.country, tc.image, got, tc.want, tc.why)
+		}
+	}
+}
+
+// An unrecognised country must not invent a year.
+func TestNationalYearForUnknownCountry(t *testing.T) {
+	if got := nationalYearFor("Atlantis", "xx/Atlantis_2euro.jpg"); got != "" {
+		t.Errorf("got %q, want an empty year for a country with no data", got)
 	}
 }
 
