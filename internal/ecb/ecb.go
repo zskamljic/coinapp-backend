@@ -24,9 +24,8 @@ const (
 	// The regular (national-side) 2 euro coins live on a separate page with a
 	// different shape: one box per country holding a prose description and one
 	// image per design, rather than one box per coin with labelled fields.
-	nationalURL   = origin + "/euro/coins/2euro/html/index.en.html"
-	nationalAsset = origin + "/euro/coins/common/"
-	userAgent     = "coinapp-backend (+https://github.com/coinapp)"
+	nationalURL = origin + "/euro/coins/2euro/html/index.en.html"
+	userAgent   = "coinapp-backend (+https://github.com/coinapp)"
 )
 
 var (
@@ -344,9 +343,13 @@ func designYear(src string) string {
 }
 
 // extractNationalImages returns the absolute image URLs of one country box, in
-// document order. These sit on a bare <img> inside a <picture class="coin-cropper">
-// and are root-relative, so they need the common-sides asset base rather than the
-// commemorative one.
+// document order.
+//
+// These sit on a bare <img> inside a <picture class="coin-cropper"> and, unlike
+// the year pages whose sources are relative to their page, they are already
+// root-absolute ("/euro/coins/common/shared/img/be/Belgium_2euroAl.jpg"). So
+// they only need the origin; prefixing a directory as well would double the
+// path and every image would 404.
 func extractNationalImages(box string) []string {
 	var out []string
 	seen := map[string]struct{}{}
@@ -357,7 +360,7 @@ func extractNationalImages(box string) []string {
 			if err != nil {
 				continue
 			}
-			absolute := nationalAsset + strings.TrimPrefix(ref.String(), "/")
+			absolute := origin + ref.String()
 			if !imageExt.MatchString(absolute) {
 				continue
 			}

@@ -169,37 +169,59 @@ func mintID() string {
 	return hex.EncodeToString(buf)
 }
 
-func bucketKey(slug string, year int) string {
-	return fmt.Sprintf("%s|%d", slug, year)
-}
-
 func overrideKey(d Doc) string {
 	return fmt.Sprintf("%s|%d|%s", d.Slug, d.Year, derive.Normalize(d.Feature))
 }
 
 type indexes struct {
 	byFingerprint map[string]string
-	byBucket      map[string][]Doc
-	overrides     map[string]string
+	// Buckets are keyed by series as well as country and year, so the two series
+	// can never be matched against each other. See resolve.
+	byBucket     map[string][]Doc
+	fingerprintK map[string]string
+	overrides    map[string]string
+}
+
+// seriesBucketKey scopes a bucket to one series. The series is part of the key
+// rather than a filter, so a national coin cannot pick up a commemorative id
+// even when country, year and wording coincide.
+func seriesBucketKey(kind, slug string, year int) string {
+	return fmt.Sprintf("%s|%s|%d", kindOfSeries(kind), slug, year)
+}
+
+func kindOfSeries(kind string) string {
+	if kind == KindNational {
+		return KindNational
+	}
+	return KindCommemorative
 }
 
 func buildIndexes(existing map[string]Doc, overrides map[string]string) indexes {
 	idx := indexes{
 		byFingerprint: map[string]string{},
 		byBucket:      map[string][]Doc{},
+		fingerprintK:  map[string]string{},
 		overrides:     overrides,
 	}
 	for id, doc := range existing {
+		kind := kindOfDoc(doc)
 		all := append([]string{doc.FP}, doc.Fingerprints...)
 		for _, fp := range all {
-			if fp != "" {
-				if _, seen := idx.byFingerprint[fp]; !seen {
-					idx.byFingerprint[fp] = id
-				}
+			if fp == "" {
+				continue
+			}
+			if _, seen := idx.byFingerprint[fp]; !seen {
+				idx.byFingerprint[fp] = id
+			}
+			// Scoped copy: the same fingerprint can legitimately exist in both
+			// series (same country, same year, similar wording).
+			seriesFP := kind + "|" + fp
+			if _, seen := idx.fingerprintK[seriesFP]; !seen {
+				idx.fingerprintK[seriesFP] = id
 			}
 		}
-		key := bucketKey(doc.Slug, doc.Year)
-		idx.byBucket[key] = append(idx.byBucket[key], doc)
+		idx.byBucket[seriesBucketKey(doc.Kind, doc.Slug, doc.Year)] =
+			append(idx.byBucket[seriesBucketKey(doc.Kind, doc.Slug, doc.Year)], doc)
 	}
 	return idx
 }
@@ -209,14 +231,14 @@ func buildIndexes(existing map[string]Doc, overrides map[string]string) indexes 
 // Order: manual override -> exact fingerprint -> fuzzy within country+year -> new.
 // `taken` prevents two scrapes in one run from claiming the same id.
 //
-// A national coin never matches anything. The two series share a country and
-// often a year, so the fuzzy match would happily hand a regular 2 euro coin the
-// id of a commemorative one and silently repoint a user's saved count at a
-// different coin. National coins are a separate series: they are always new.
+// Every lookup is scoped to the coin's series. The two series share a country and
+// often a year, so an unscoped fuzzy match would happily hand a regular 2 euro
+// coin the id of a commemorative one and silently repoint a user's saved count
+// at a different piece. Scoping it also means a national coin still matches the
+// national coin stored by the previous run, which is what keeps its id — and
+// therefore the counts attached to it — stable across syncs.
 func resolve(doc Doc, idx indexes, taken map[string]struct{}) (id, how string, score float64) {
-	if doc.Kind == KindNational {
-		return "", "new", 0
-	}
+	kind := kindOfDoc(doc)
 
 	if pinned, ok := idx.overrides[overrideKey(doc)]; ok {
 		if _, used := taken[pinned]; !used {
@@ -224,13 +246,13 @@ func resolve(doc Doc, idx indexes, taken map[string]struct{}) (id, how string, s
 		}
 	}
 
-	if exact, ok := idx.byFingerprint[doc.FP]; ok {
+	if exact, ok := idx.fingerprintK[kind+"|"+doc.FP]; ok {
 		if _, used := taken[exact]; !used {
 			return exact, "fingerprint", 1
 		}
 	}
 
-	candidates := idx.byBucket[bucketKey(doc.Slug, doc.Year)]
+	candidates := idx.byBucket[seriesBucketKey(doc.Kind, doc.Slug, doc.Year)]
 	var (
 		bestID    string
 		bestScore float64

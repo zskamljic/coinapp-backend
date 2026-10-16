@@ -35,8 +35,13 @@ func TestParseNationalPage(t *testing.T) {
 		if len(coin.ImageURLs) != 1 {
 			t.Fatalf("expected exactly one image per design, got %v", coin.ImageURLs)
 		}
-		if !strings.HasPrefix(coin.ImageURLs[0], nationalAsset) {
-			t.Errorf("image is not an absolute common-sides URL: %s", coin.ImageURLs[0])
+		if !strings.HasPrefix(coin.ImageURLs[0], origin+"/euro/coins/") {
+			t.Errorf("image is not an absolute ECB URL: %s", coin.ImageURLs[0])
+		}
+		// Guard the bug where a directory base was prefixed to an already
+		// root-absolute src, producing a doubled path that 404s.
+		if strings.Contains(coin.ImageURLs[0], "/common/euro/coins/") {
+			t.Errorf("image path is doubled: %s", coin.ImageURLs[0])
 		}
 		countries[coin.Country]++
 		images++
