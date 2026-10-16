@@ -2,6 +2,8 @@
 # Anchored to the repo root, otherwise this also matches the cmd/coinapp-backend
 # source directory and silently drops the program's entry point from the repo.
 /coinapp-backend
+# cmd/rekey also builds into the repo root.
+/rekey
 *.exe
 *.dll
 *.so
