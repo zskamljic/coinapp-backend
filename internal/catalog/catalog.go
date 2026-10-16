@@ -58,7 +58,17 @@ type Doc struct {
 	Removed       bool     `json:"removed"`
 	CreatedAtMS   int64    `json:"createdAt"`
 	UpdatedAtMS   int64    `json:"updatedAt"`
+	// Kind is "commemorative" or "national". Documents written before this field
+	// existed have it empty, which is read as commemorative; contentFields
+	// includes it so the next sync backfills them.
+	Kind string `json:"kind"`
 }
+
+// Series kinds, mirrored from the ecb package. A coin belongs to exactly one.
+const (
+	KindCommemorative = "commemorative"
+	KindNational      = "national"
+)
 
 func nowMS() int64 { return time.Now().UnixMilli() }
 
@@ -128,12 +138,25 @@ func ToDocument(coin ecb.Coin) Doc {
 		ImageFallback: jpeg,
 		ImageMissing:  webp == nil,
 		FP:            derive.Fingerprint(coin.Country, year, coin.Feature),
+		Kind:          kindOf(coin),
 	}
+}
+
+// kindOf normalises the series, defaulting to commemorative.
+//
+// The default matters: every document written before the two-series split has an
+// empty Kind, and treating that as "national" would hide the whole catalog.
+func kindOf(coin ecb.Coin) string {
+	if coin.Kind == KindNational {
+		return KindNational
+	}
+	return KindCommemorative
 }
 
 var contentFields = []string{
 	"country", "countrySlug", "feature", "description", "volume",
 	"sortVolume", "date", "year", "sortDate", "imageUrl", "imageFallbackUrl", "imagePlaceholder",
+	"kind",
 }
 
 // mintID returns 16 hex chars = 64 bits, collision-free across a catalog of
@@ -185,7 +208,16 @@ func buildIndexes(existing map[string]Doc, overrides map[string]string) indexes 
 //
 // Order: manual override -> exact fingerprint -> fuzzy within country+year -> new.
 // `taken` prevents two scrapes in one run from claiming the same id.
+//
+// A national coin never matches anything. The two series share a country and
+// often a year, so the fuzzy match would happily hand a regular 2 euro coin the
+// id of a commemorative one and silently repoint a user's saved count at a
+// different coin. National coins are a separate series: they are always new.
 func resolve(doc Doc, idx indexes, taken map[string]struct{}) (id, how string, score float64) {
+	if doc.Kind == KindNational {
+		return "", "new", 0
+	}
+
 	if pinned, ok := idx.overrides[overrideKey(doc)]; ok {
 		if _, used := taken[pinned]; !used {
 			return pinned, "override", 1
@@ -271,9 +303,24 @@ func diffFields(before, after Doc) []string {
 			if before.ImageMissing != after.ImageMissing {
 				changed = append(changed, field)
 			}
+		case "kind":
+			// An empty Kind means "written before the split", so it is compared as
+			// commemorative rather than as a difference.
+			if kindOfDoc(before) != kindOfDoc(after) {
+				changed = append(changed, field)
+			}
 		}
 	}
 	return changed
+}
+
+// kindOfDoc is the stored series, defaulting to commemorative for documents
+// written before the field existed.
+func kindOfDoc(d Doc) string {
+	if d.Kind == KindNational {
+		return KindNational
+	}
+	return KindCommemorative
 }
 
 func ptrString(p *string) string {
@@ -419,6 +466,7 @@ func ParseExisting(raw []byte) (map[string]Doc, error) {
 			id := strconv.Itoa(index)
 			doc.ID = id
 			doc.Fingerprints = []string{doc.FP}
+			doc.Kind = KindCommemorative
 			out[id] = doc
 		}
 		return out, nil

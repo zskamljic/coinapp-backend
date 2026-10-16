@@ -21,7 +21,12 @@ const (
 	origin    = "https://www.ecb.europa.eu"
 	indexURL  = origin + "/euro/coins/comm/html/index.en.html"
 	assetBase = origin + "/euro/coins/comm/html/"
-	userAgent = "coinapp-backend (+https://github.com/coinapp)"
+	// The regular (national-side) 2 euro coins live on a separate page with a
+	// different shape: one box per country holding a prose description and one
+	// image per design, rather than one box per coin with labelled fields.
+	nationalURL   = origin + "/euro/coins/2euro/html/index.en.html"
+	nationalAsset = origin + "/euro/coins/common/"
+	userAgent     = "coinapp-backend (+https://github.com/coinapp)"
 )
 
 var (
@@ -62,6 +67,9 @@ type Coin struct {
 	Date        string   `json:"date"`
 	ImageURLs   []string `json:"imageUrls"`
 	SourcePage  string   `json:"-"`
+	// Kind is "commemorative" or "national". The national coins are a different
+	// series with different matching rules, so it is decided at parse time.
+	Kind string `json:"kind"`
 }
 
 func decodeEntities(text string) string {
@@ -216,9 +224,151 @@ func ParseYearPage(html string) []Coin {
 			Volume:      volume,
 			Date:        date,
 			ImageURLs:   extractImages(box),
+			Kind:        KindCommemorative,
 		})
 	}
 	return coins
+}
+
+// Series kinds. A coin is one or the other, never both.
+const (
+	KindCommemorative = "commemorative"
+	KindNational      = "national"
+)
+
+var (
+	// The national page's description is a run of <p> blocks directly after the
+	// <h3>, with no wrapper div as the year pages have, and a trailing country
+	// link after the last one. Taking the paragraphs one at a time and stopping at
+	// the first non-paragraph avoids picking that link up.
+	paragraph    = regexp.MustCompile(`(?is)^\s*<p[^>]*>(.*?)</p>`)
+	nationalYear = regexp.MustCompile(`^(19|20)[0-9]{2}$`)
+	// Files are named like Belgium_2euro_2014ph.jpg or France_2euro_2022.jpg. The
+	// trailing year is when that design entered circulation, which is the closest
+	// thing the page offers to an issuing date.
+	nationalYearInName = regexp.MustCompile(`([12][0-9]{3})`)
+)
+
+// ParseNationalPage parses the regular 2 euro coins page into one entry per
+// design.
+//
+// The page is structured per country, not per coin: a box holds the country's
+// prose plus one image per design. Countries that changed their national design
+// show several images (Belgium three, the Vatican five), and those are genuinely
+// different coins a collector owns separately, so each image becomes its own
+// entry with the country text as its description.
+//
+// The page publishes no issuing volume and no issuing date, so Volume is left
+// empty and the date is the design year taken from the image filename. The UI
+// renders a missing volume as a dash rather than inventing a number.
+func ParseNationalPage(html string) []Coin {
+	var coins []Coin
+
+	for _, box := range extractBoxes(html) {
+		country := extractCountry(box)
+		if country == "" {
+			continue
+		}
+		description := extractNationalDescription(box)
+		if description == "" {
+			continue
+		}
+
+		for i, src := range extractNationalImages(box) {
+			year := designYear(src)
+			coins = append(coins, Coin{
+				Country:     country,
+				Feature:     nationalFeature(i, year),
+				Description: description,
+				Volume:      "",
+				Date:        year,
+				ImageURLs:   []string{src},
+				Kind:        KindNational,
+			})
+		}
+	}
+	return coins
+}
+
+// extractNationalDescription returns the prose that follows the country's <h3>.
+//
+// The paragraphs are consecutive, so they are consumed one at a time until
+// something that is not a paragraph turns up. That trailing country link is not
+// part of the description and would otherwise end every country's text with its
+// own name.
+func extractNationalDescription(box string) string {
+	h := heading.FindStringIndex(box)
+	if h == nil {
+		return ""
+	}
+
+	rest := box[h[1]:]
+	var parts []string
+	for {
+		m := paragraph.FindStringSubmatch(rest)
+		if m == nil {
+			break
+		}
+		parts = append(parts, toText(m[1]))
+		rest = rest[len(m[0]):]
+	}
+	return strings.Join(parts, " ")
+}
+
+// nationalFeature names the design, e.g. "National side, 2008 design" or
+// "National side, third series" when the filename carries no year.
+func nationalFeature(index int, year string) string {
+	switch {
+	case year != "":
+		return "National side, " + year + " design"
+	case index > 0:
+		return fmt.Sprintf("National side, series %d", index+1)
+	default:
+		return "National side"
+	}
+}
+
+// designYear pulls a year out of an image filename.
+func designYear(src string) string {
+	name := src
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.LastIndexByte(name, '.'); i > 0 {
+		name = name[:i]
+	}
+	if m := nationalYearInName.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// extractNationalImages returns the absolute image URLs of one country box, in
+// document order. These sit on a bare <img> inside a <picture class="coin-cropper">
+// and are root-relative, so they need the common-sides asset base rather than the
+// commemorative one.
+func extractNationalImages(box string) []string {
+	var out []string
+	seen := map[string]struct{}{}
+
+	for _, p := range picture.FindAllStringSubmatch(box, -1) {
+		for _, m := range imgSrc.FindAllStringSubmatch(p[1], -1) {
+			ref, err := url.Parse(strings.TrimSpace(m[1]))
+			if err != nil {
+				continue
+			}
+			absolute := nationalAsset + strings.TrimPrefix(ref.String(), "/")
+			if !imageExt.MatchString(absolute) {
+				continue
+			}
+			if _, dup := seen[absolute]; dup {
+				continue
+			}
+			seen[absolute] = struct{}{}
+			out = append(out, absolute)
+		}
+	}
+	return out
 }
 
 // ParseIndexPage returns the year page URLs, newest first.
@@ -255,7 +405,8 @@ func defaultFetch(ctx context.Context, target string) (string, error) {
 	return string(body), nil
 }
 
-// FetchCoins scrapes every year page and returns all coins plus the page count.
+// FetchCoins scrapes every year page plus the regular 2 euro coins page, and
+// returns all coins plus the year page count.
 func FetchCoins(ctx context.Context) ([]Coin, int, error) {
 	return fetchCoinsWith(ctx, defaultFetch)
 }
@@ -282,5 +433,18 @@ func fetchCoinsWith(ctx context.Context, fetch fetcher) ([]Coin, int, error) {
 			coins = append(coins, coin)
 		}
 	}
+
+	// The national coins are a separate series on a separate page. A failure
+	// there must not lose the commemoratives just scraped, so it is reported but
+	// the commemoratives are still returned.
+	national, err := fetch(ctx, nationalURL)
+	if err != nil {
+		return coins, len(years), fmt.Errorf("national 2 euro page: %w", err)
+	}
+	for _, coin := range ParseNationalPage(national) {
+		coin.SourcePage = nationalURL
+		coins = append(coins, coin)
+	}
+
 	return coins, len(years), nil
 }
