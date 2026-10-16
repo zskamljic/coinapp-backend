@@ -298,10 +298,11 @@ func (c *Client) ReadUserOwned(ctx context.Context, uid string) (map[string]int,
 // CoinCounts maps a coin id to a held count.
 //
 // It exists because the Realtime Database coerces a node whose keys are all
-// integers into a JSON array, padding the gaps with nulls. Coin ids are often
-// integers (the legacy "0".."501"), so a counts node can come back either as an
-// object or as an array, and decoding has to accept both or a perfectly valid
-// collection fails to read. A null slot — an array gap — is simply dropped.
+// integers into a JSON array, padding the gaps with nulls. Coin ids *were*
+// integers (the legacy "0".."501" array indexes) until the rekeying migration
+// gave every coin a random 16 hex character id, so both shapes are still
+// possible: a collection saved before the migration and read after it would
+// decode as an array otherwise. A null slot — an array gap — is simply dropped.
 type CoinCounts map[string]int
 
 func (c *CoinCounts) UnmarshalJSON(data []byte) error {

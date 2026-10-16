@@ -470,6 +470,10 @@ func Build(scraped []ecb.Coin, existing map[string]Doc, overrides map[string]str
 //     are then frozen: this package never reuses or renumbers one, so they become
 //     stable opaque ids by construction.
 //   - a keyed map, which this backend writes from the second run onwards.
+//
+// The array branch is only reachable from a pre-migration backup. cmd/rekey has
+// since given every coin in the live catalog a random 16 hex character id, so
+// this path now exists to read an old export rather than to read production.
 func ParseExisting(raw []byte) (map[string]Doc, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
